@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "regimes": [
+    "Active Monsoon",
+    "Break Monsoon",
+    "Coastal",
+    "Monsoon Low/Depression",
+    "Orographic",
+    "Weak/Normal",
+    "Western Disturbance"
+  ],
+  "features": [
+    "latitude",
+    "longitude",
+    "raw_nwp_rainfall",
+    "u850",
+    "v850",
+    "wind_speed",
+    "wind_speed_850",
+    "vorticity_850",
+    "q500",
+    "cape",
+    "olr",
+    "olr_anomaly",
+    "mslp_anomaly",
+    "moisture_flux",
+    "trough_latitude",
+    "elevation",
+    "slope",
+    "dist_coast",
+    "month",
+    "day_of_year",
+    "sin_day",
+    "cos_day",
+    "is_monsoon"
+  ],
+  "train_years": [
+    2016,
+    2017,
+    2018,
+    2019,
+    2020
+  ],
+  "validation_years": [
+    2021,
+    2022
+  ],
+  "expert_metrics": {
+    "Active Monsoon": {
+      "n": 3498,
+      "rmse": 2.558297583527867,
+      "mae": 1.8499031925588798
+    },
+    "Break Monsoon": {
+      "n": 3180,
+      "rmse": 2.1900979915285594,
+      "mae": 0.41352438831388655
+    },
+    "Coastal": {
+      "n": 3710,
+      "rmse": 2.337586725153254,
+      "mae": 1.6890862071248085
+    },
+    "Monsoon Low/Depression": {
+      "n": 3604,
+      "rmse": 4.981835472922213,
+      "mae": 2.9160736849151534
+    },
+    "Orographic": {
+      "n": 3604,
+      "rmse": 2.2722639806944813,
+      "mae": 1.6318643455028188
+    },
+    "Weak/Normal": {
+      "n": 5247,
+      "rmse": 2.0453176694953865,
+      "mae": 1.4289672765670456
+    },
+    "Western Disturbance": {
+      "n": 4823,
+      "rmse": 3.017038790744551,
+      "mae": 1.571077812712471
+    }
+  }
+}

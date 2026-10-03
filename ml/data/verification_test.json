@@ -1,0 +1,45 @@
+{
+  "success": true,
+  "split": "test",
+  "split_years": [
+    2023
+  ],
+  "n_samples": 13833,
+  "threshold_mm": 64.5,
+  "metrics": {
+    "raw_gfs_rmse": 7.556551723263738,
+    "corrected_rmse": 3.2887114671448963,
+    "raw_gfs_mae": 4.1709802645846885,
+    "corrected_mae": 1.8475820753425358,
+    "raw_gfs_csi": 0.33047210300429186,
+    "corrected_csi": 0.7967479674796748,
+    "raw_gfs_pod": 0.34375,
+    "corrected_pod": 0.875,
+    "raw_gfs_far": 0.10465116279069768,
+    "corrected_far": 0.10091743119266056,
+    "raw_gfs_ets": 0.32644635708879227,
+    "corrected_ets": 0.7937888295052661,
+    "heavy_accuracy": 0.9960240005783272,
+    "heavy_precision": 0.8858447488584474,
+    "heavy_recall": 0.8660714285714286,
+    "heavy_f1": 0.8758465011286681,
+    "heavy_roc_auc": 0.9982636884204781,
+    "raw_gfs_fss": null,
+    "corrected_fss": null
+  },
+  "heavy_rain": {
+    "threshold_mm": 64.5,
+    "accuracy": 0.9960240005783272,
+    "precision": 0.8858447488584474,
+    "recall": 0.8660714285714286,
+    "f1": 0.8758465011286681,
+    "roc_auc": 0.9982636884204781
+  },
+  "created_at": "2026-10-03T11:39:24.823891+00:00",
+  "source": {
+    "test_data": "C:\\Users\\adesh\\OneDrive\\Desktop\\varsha-moe-updates\\ml\\data\\processed\\test.csv",
+    "regime_model": "C:\\Users\\adesh\\OneDrive\\Desktop\\varsha-moe-updates\\ml\\models\\regime_classifier.joblib",
+    "correction_model": "C:\\Users\\adesh\\OneDrive\\Desktop\\varsha-moe-updates\\ml\\models\\rainfall_corrector.joblib",
+    "heavy_rain_model": "C:\\Users\\adesh\\OneDrive\\Desktop\\varsha-moe-updates\\ml\\models\\heavy_rain_classifier.joblib"
+  }
+}
