@@ -2,6 +2,14 @@
 
 ### Regime-Aware AI Post-Processing of Monsoon Rainfall Forecasts
 
+## 🎥 Demo Video
+
+Watch the complete working demonstration of **VARSHA-MoE**:
+
+[![VARSHA-MoE Demo](https://img.youtube.com/vi/Hs5rVmUrfQY/maxresdefault.jpg)](https://youtu.be/Hs5rVmUrfQY)
+
+▶️ **[Watch Demo on YouTube](https://youtu.be/Hs5rVmUrfQY)**
+
 > **SIH 2026 | Problem Statement ID: 26080 | Team ID: 171211**
 
 VARSHA-MoE is an AI-based rainfall post-processing system designed to improve numerical weather prediction (NWP) rainfall forecasts by adapting the correction process to different monsoon weather regimes.
@@ -72,10 +80,3 @@ The system provides a web-based dashboard for rainfall forecasts, regime informa
                     │       Heavy Rain Model          │
                     └─────────────────────────────────┘
 ```
-## 🎥 Demo Video
-
-Watch the complete working demonstration of **VARSHA-MoE**:
-
-[![VARSHA-MoE Demo](https://img.youtube.com/vi/Hs5rVmUrfQY/maxresdefault.jpg)](https://youtu.be/Hs5rVmUrfQY)
-
-▶️ **[Watch Demo on YouTube](https://youtu.be/Hs5rVmUrfQY)**
