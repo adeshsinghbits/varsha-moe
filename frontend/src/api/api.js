@@ -11,7 +11,7 @@ import {
   normalizeDataStatus,
 } from "./normalize";
 
-const API_ROOT =
+export const API_ROOT =
   import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 const SERVER_ROOT = API_ROOT.replace(/\/api\/?$/, "");
@@ -119,6 +119,11 @@ export const getForecast = async (payload) =>
     (await API.post("/forecast", payload)).data
   );
 
+  export const getMoEForecast = async (payload) => {
+  const response = await API.post("/moe-predict", payload);
+  return response.data;
+};
+
 /* =========================================================
    DISTRICTS
 ========================================================= */
@@ -225,3 +230,36 @@ export const getVerification = async () =>
 ========================================================= */
 
 export default API;
+
+/* =========================================================
+   VARSHA-MoE EXTRAS (verification, polygons, explainer, bulletin)
+========================================================= */
+
+export const getAvailableDates = async () =>
+  (await API.get("/available-dates")).data;
+
+export const getDistrictProducts = async ({ date = "", state = "" } = {}) =>
+  (
+    await API.get("/district-products", {
+      params: { ...(date ? { date } : {}), ...(state ? { state } : {}) },
+    })
+  ).data;
+
+export const getDistrictExplain = async ({ districtId, date = "" }) =>
+  (
+    await API.get("/district-explain", {
+      params: { district_id: districtId, ...(date ? { date } : {}) },
+    })
+  ).data;
+
+export const getGeoDistricts = async () =>
+  (await API.get("/geo/districts")).data;
+
+export const getVerificationFull = async () =>
+  (await API.get("/verification/full")).data;
+
+export const getModelCard = async () =>
+  (await API.get("/model-card")).data;
+
+export const bulletinUrl = (date = "") =>
+  `${API_ROOT}/bulletin.pdf${date ? `?date=${encodeURIComponent(date)}` : ""}`;

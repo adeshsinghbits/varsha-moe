@@ -76,6 +76,6 @@ The system provides a web-based dashboard for rainfall forecasts, regime informa
 
 Watch the complete working demonstration of **VARSHA-MoE**:
 
-[![VARSHA-MoE Demo](https://img.youtube.com/vi/Hs5rVmUrfQY/maxresdefault.jpg)](https://youtu.be/Hs5rVmUrfQY)
+[![VARSHA-MoE Demo](https://img.youtube.com/vi/Hs5rVmUrfQY/maxresdefault.jpg)](https://youtu.be/ulZbJ8Q5suw)
 
-▶️ **[Watch Demo on YouTube](https://youtu.be/Hs5rVmUrfQY)**
+▶️ **[Watch Demo on YouTube](https://youtu.be/ulZbJ8Q5suw)**

@@ -17,6 +17,8 @@ import Historical from "./pages/Historical";
 import Landing from "./pages/Landing";
 
 import { checkHealth } from "./api/api";
+import MoEExplainer from "./pages/MoEExplainer";
+import PostProcessing from "./pages/PostProcessing";
 
 /*
  * Sidebar + Navbar exist ONLY inside this layout.
@@ -147,6 +149,19 @@ function App() {
             <Historical />
           }
         />
+        
+        <Route
+          path="/moe-forecast"
+          element={
+            <MoEExplainer />
+          }
+        />
+
+        <Route
+        path="/post-processing"
+        element={<PostProcessing />}
+      />
+        
 
       </Route>
 

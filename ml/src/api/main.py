@@ -5,7 +5,9 @@ import math
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -50,22 +52,12 @@ app.add_middleware(
 # PATHS
 # ============================================================
 
-# main.py:
-#
-# ml/
-# ├── data/
-# │   └── raw/
-# │       └── district_daily.parquet
-# ├── verification_test.json
-# └── src/
-#     └── api/
-#         └── main.py
-#
-# Therefore:
-#
-# main.py -> api -> src -> ml
-
 CURRENT_FILE = Path(__file__).resolve()
+
+# main.py
+#   -> api
+#   -> src
+#   -> ml
 ML_DIR = CURRENT_FILE.parents[2]
 
 DISTRICT_DATASET = (
@@ -75,7 +67,11 @@ DISTRICT_DATASET = (
     / "district_daily.parquet"
 )
 
-VERIFICATION_FILE = ML_DIR / "data" / "verification_test.json"
+VERIFICATION_FILE = (
+    ML_DIR
+    / "data"
+    / "verification_test.json"
+)
 
 CASE_REPLAYS_FILE = (
     ML_DIR
@@ -109,6 +105,7 @@ class ForecastRequest(BaseModel):
 
     u850: float
     v850: float
+
     wind_speed: float
     wind_speed_850: float
 
@@ -119,6 +116,7 @@ class ForecastRequest(BaseModel):
     olr: float
     olr_anomaly: float
     mslp_anomaly: float
+
     moisture_flux: float
     trough_latitude: float
 
@@ -128,6 +126,7 @@ class ForecastRequest(BaseModel):
 
     month: float
     day_of_year: float
+
     sin_day: float
     cos_day: float
     is_monsoon: float
@@ -153,11 +152,30 @@ class HeavyRainRequest(ForecastRequest):
 # HELPERS
 # ============================================================
 
+def _safe_float(value: Any) -> Optional[float]:
+    """
+    Convert a value to float safely.
+    Returns None for None/NaN/invalid values.
+    """
+    try:
+        if value is None or pd.isna(value):
+            return None
+
+        result = float(value)
+
+        if not math.isfinite(result):
+            return None
+
+        return result
+
+    except Exception:
+        return None
+
+
 def ensure_predictor() -> MonsoonPredictor:
     """
-    Return the loaded predictor or raise a readable HTTP error.
+    Return loaded predictor or raise readable HTTP error.
     """
-
     if predictor is None:
         raise HTTPException(
             status_code=500,
@@ -170,12 +188,13 @@ def ensure_predictor() -> MonsoonPredictor:
     return predictor
 
 
-def request_to_dict(request: BaseModel) -> dict[str, Any]:
+def request_to_dict(
+    request: BaseModel,
+) -> dict[str, Any]:
     """
-    Convert Pydantic request into a normal dictionary.
+    Convert Pydantic request into normal dictionary.
     Supports Pydantic v1 and v2.
     """
-
     if hasattr(request, "model_dump"):
         return request.model_dump()
 
@@ -187,11 +206,12 @@ def safe_float(
     field_name: str,
 ) -> float:
     """
-    Convert a dataset value to finite float.
+    Convert dataset value to finite float.
     """
-
-    if pd.isna(value):
-        raise ValueError(f"{field_name} is NaN")
+    if value is None or pd.isna(value):
+        raise ValueError(
+            f"{field_name} is NaN"
+        )
 
     result = float(value)
 
@@ -208,9 +228,8 @@ def dataset_numeric(
     column: str,
 ) -> float:
     """
-    Read a numeric column from a district row.
+    Read numeric column from district row.
     """
-
     if column not in row.index:
         raise KeyError(
             f"Dataset column '{column}' is missing"
@@ -220,6 +239,78 @@ def dataset_numeric(
         row[column],
         column,
     )
+
+
+def normalize_regime_name(value: Any) -> str:
+    """
+    Normalize regime names for consistent frontend display.
+    """
+    if value is None:
+        return ""
+
+    return (
+        str(value)
+        .strip()
+        .replace("_", " ")
+    )
+
+
+def normalize_district_id(value: Any) -> str:
+    """
+    Normalize district IDs so query-string and parquet
+    representations can be compared safely.
+    """
+    if value is None:
+        return ""
+
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+
+    return str(value).strip()
+
+
+def get_regime_from_row(row: pd.Series) -> str:
+    """
+    Return the dataset regime name.
+    """
+    if "regime_name" in row.index:
+        value = row.get("regime_name")
+
+        if value is not None and not pd.isna(value):
+            return normalize_regime_name(value)
+
+    if "regime" in row.index:
+        return normalize_regime_name(
+            row.get("regime")
+        )
+
+    return ""
+
+
+# ============================================================
+# DATASET LOADER
+# ============================================================
+
+def load_district_dataset() -> pd.DataFrame:
+    """
+    Load district_daily.parquet.
+    """
+    if not DISTRICT_DATASET.exists():
+        raise FileNotFoundError(
+            "district_daily.parquet not found at: "
+            f"{DISTRICT_DATASET}"
+        )
+
+    df = pd.read_parquet(
+        DISTRICT_DATASET
+    )
+
+    if df.empty:
+        raise ValueError(
+            "district_daily.parquet is empty"
+        )
+
+    return df
 
 
 # ============================================================
@@ -233,9 +324,7 @@ def build_district_payload(
     Convert one district_daily.parquet row into the
     exact feature contract expected by MonsoonPredictor.
 
-    wind_speed is derived from u850/v850 because the
-    dataset contains wind_speed_850 but the inference
-    contract also requires wind_speed.
+    wind_speed is derived from u850/v850.
     """
 
     # --------------------------------------------------------
@@ -258,18 +347,27 @@ def build_district_payload(
         )
 
     month = int(date.month)
-    day_of_year = int(date.dayofyear)
+
+    day_of_year = int(
+        date.dayofyear
+    )
 
     # --------------------------------------------------------
     # CYCLIC DATE FEATURES
     # --------------------------------------------------------
 
     sin_day = math.sin(
-        2.0 * math.pi * day_of_year / 365.25
+        2.0
+        * math.pi
+        * day_of_year
+        / 365.25
     )
 
     cos_day = math.cos(
-        2.0 * math.pi * day_of_year / 365.25
+        2.0
+        * math.pi
+        * day_of_year
+        / 365.25
     )
 
     is_monsoon = (
@@ -450,7 +548,9 @@ def build_district_forecast(
         float(row["obs_rain_mean"])
         if (
             "obs_rain_mean" in row.index
-            and pd.notna(row["obs_rain_mean"])
+            and pd.notna(
+                row["obs_rain_mean"]
+            )
         )
         else None
     )
@@ -459,7 +559,9 @@ def build_district_forecast(
         float(row["obs_rain_max"])
         if (
             "obs_rain_max" in row.index
-            and pd.notna(row["obs_rain_max"])
+            and pd.notna(
+                row["obs_rain_max"]
+            )
         )
         else None
     )
@@ -469,14 +571,20 @@ def build_district_forecast(
         "state_name": state_name,
 
         "date": (
-            pd.to_datetime(row["date"])
-            .strftime("%Y-%m-%d")
+            pd.to_datetime(
+                row["date"]
+            ).strftime("%Y-%m-%d")
             if "date" in row.index
             else None
         ),
 
-        "latitude": payload["latitude"],
-        "longitude": payload["longitude"],
+        "latitude": payload[
+            "latitude"
+        ],
+
+        "longitude": payload[
+            "longitude"
+        ],
 
         "raw_rainfall_mm": float(
             result["raw_nwp_rainfall"]
@@ -492,7 +600,9 @@ def build_district_forecast(
 
         "observed_rainfall_mm": observed,
 
-        "observed_max_rainfall_mm": observed_max,
+        "observed_max_rainfall_mm": (
+            observed_max
+        ),
 
         "regime": str(
             result["predicted_regime"]
@@ -538,15 +648,797 @@ def health():
             if predictor is not None
             else "model_error"
         ),
+
         "model_loaded": (
             predictor is not None
         ),
+
         "model_error": MODEL_LOAD_ERROR,
-        "dataset_exists": DISTRICT_DATASET.exists(),
+
+        "dataset_exists": (
+            DISTRICT_DATASET.exists()
+        ),
+
         "dataset_path": str(
             DISTRICT_DATASET
         ),
     }
+
+
+# ============================================================
+# AVAILABLE DATES
+# ============================================================
+
+@app.get("/api/available-dates")
+def available_dates():
+    try:
+        df = load_district_dataset()
+
+        if "date" not in df.columns:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Dataset does not contain "
+                    "a date column."
+                ),
+            )
+
+        dates = (
+            pd.to_datetime(
+                df["date"],
+                errors="coerce",
+            )
+            .dropna()
+            .dt.strftime("%Y-%m-%d")
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+
+        return {
+            "success": True,
+
+            "dates": [
+                {"date": d}
+                for d in dates
+            ],
+
+            "latest": (
+                dates[-1]
+                if dates
+                else None
+            ),
+
+            "earliest": (
+                dates[0]
+                if dates
+                else None
+            ),
+
+            "count": len(dates),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load available dates: "
+                f"{exc}"
+            ),
+        )
+
+
+# ============================================================
+# DISTRICT PRODUCTS
+# ============================================================
+
+@app.get("/api/district-products")
+def district_products(
+    date: str,
+):
+    """
+    Return all district-level products for a selected date.
+
+    Used by the MoE Explainability page.
+    """
+
+    try:
+        df = load_district_dataset()
+
+        if "date" not in df.columns:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Dataset does not contain date."
+                ),
+            )
+
+        df["date"] = pd.to_datetime(
+            df["date"],
+            errors="coerce",
+        )
+
+        target_date = pd.to_datetime(
+            date,
+            errors="coerce",
+        )
+
+        if pd.isna(target_date):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
+                ),
+            )
+
+        target_date = target_date.normalize()
+
+        day = df[
+            df["date"].dt.normalize()
+            == target_date
+        ].copy()
+
+        if day.empty:
+            return {
+                "success": True,
+                "date": target_date.strftime(
+                    "%Y-%m-%d"
+                ),
+                "count": 0,
+                "districts": [],
+            }
+
+        districts: list[
+            dict[str, Any]
+        ] = []
+
+        for _, row in day.iterrows():
+
+            districts.append(
+                {
+                    "district_id": normalize_district_id(
+                        row.get(
+                            "district_id",
+                            "",
+                        )
+                    ),
+
+                    "district_name": str(
+                        row.get(
+                            "district_name",
+                            "",
+                        )
+                    ),
+
+                    "state_name": str(
+                        row.get(
+                            "state_name",
+                            "",
+                        )
+                    ),
+
+                    "regime": get_regime_from_row(
+                        row
+                    ),
+
+                    "raw_nwp_rainfall": (
+                        _safe_float(
+                            row.get(
+                                "raw_nwp_d1"
+                            )
+                        )
+                    ),
+
+                    "observed_rainfall_mm": (
+                        _safe_float(
+                            row.get(
+                                "obs_rain_mean"
+                            )
+                        )
+                    ),
+
+                    "latitude": _safe_float(
+                        row.get(
+                            "latitude"
+                        )
+                    ),
+
+                    "longitude": _safe_float(
+                        row.get(
+                            "longitude"
+                        )
+                    ),
+                }
+            )
+
+        return {
+            "success": True,
+            "date": target_date.strftime(
+                "%Y-%m-%d"
+            ),
+            "count": len(districts),
+            "districts": districts,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to load district products: "
+                f"{exc}"
+            ),
+        )
+
+
+# ============================================================
+# DISTRICT EXPLAIN
+# ============================================================
+@app.get("/api/district-explain")
+def district_explain(
+    district_id: str = Query(
+        ...,
+        description="District ID",
+    ),
+    date: str = Query(
+        ...,
+        description="Date YYYY-MM-DD",
+    ),
+):
+    """
+    Explain the VARSHA-MoE prediction for one district/date.
+
+    This endpoint uses the real dataset row and the existing
+    predict_moe() inference pipeline.
+
+    SHAP values are only returned when a compatible SHAP
+    implementation is actually available. No fake values
+    are generated.
+    """
+
+    try:
+
+        # ----------------------------------------------------
+        # Load dataset
+        # ----------------------------------------------------
+
+        df = load_district_dataset()
+
+        required = {
+            "date",
+            "district_id",
+            "district_name",
+            "state_name",
+            "raw_nwp_d1",
+        }
+
+        missing = sorted(
+            required - set(df.columns)
+        )
+
+        if missing:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": (
+                        "Dataset is missing "
+                        "required columns."
+                    ),
+                    "missing_columns": missing,
+                },
+            )
+
+        # ----------------------------------------------------
+        # Parse date
+        # ----------------------------------------------------
+
+        target_date = pd.to_datetime(
+            date,
+            errors="coerce",
+        )
+
+        if pd.isna(target_date):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
+                ),
+            )
+
+        target_date = target_date.normalize()
+
+        # ----------------------------------------------------
+        # Normalize district IDs
+        # ----------------------------------------------------
+
+        normalized_id = (
+            df["district_id"]
+            .map(normalize_district_id)
+        )
+
+        normalized_date = (
+            pd.to_datetime(
+                df["date"],
+                errors="coerce",
+            )
+            .dt
+            .normalize()
+        )
+
+        match = df[
+            (normalized_id == str(district_id).strip())
+            & (normalized_date == target_date)
+        ].copy()
+
+        # ----------------------------------------------------
+        # If no exact ID match, try district name
+        # ----------------------------------------------------
+
+        if match.empty and "district_name" in df.columns:
+
+            name_match = df[
+                df["district_name"]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                == str(district_id)
+                .strip()
+                .lower()
+            ]
+
+            name_match = name_match[
+                pd.to_datetime(
+                    name_match["date"],
+                    errors="coerce",
+                )
+                .dt
+                .normalize()
+                == target_date
+            ]
+
+            match = name_match.copy()
+
+        if match.empty:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": (
+                        "No district record found "
+                        "for the requested date."
+                    ),
+                    "districtId": district_id,
+                    "date": target_date.strftime(
+                        "%Y-%m-%d"
+                    ),
+                },
+            )
+
+        row = match.iloc[0]
+
+        # ----------------------------------------------------
+        # Build actual model payload
+        # ----------------------------------------------------
+
+        payload = build_district_payload(
+            row
+        )
+
+        # ----------------------------------------------------
+        # Run actual VARSHA-MoE
+        # ----------------------------------------------------
+
+        moe_result = predict_moe(
+            payload
+        )
+
+        if not isinstance(
+            moe_result,
+            dict,
+        ):
+            raise ValueError(
+                "predict_moe() did not return "
+                "a dictionary."
+            )
+
+        # ----------------------------------------------------
+        # Gate probabilities
+        # ----------------------------------------------------
+
+        regime_probabilities = (
+            moe_result.get(
+                "regime_probabilities",
+                {},
+            )
+        )
+
+        if not isinstance(
+            regime_probabilities,
+            dict,
+        ):
+            regime_probabilities = {}
+
+        clean_probabilities = {}
+
+        for regime, probability in (
+            regime_probabilities.items()
+        ):
+            value = _safe_float(
+                probability
+            )
+
+            if value is not None:
+                clean_probabilities[
+                    normalize_regime_name(
+                        regime
+                    )
+                ] = value
+
+        # ----------------------------------------------------
+        # Expert predictions
+        # ----------------------------------------------------
+
+        expert_predictions = (
+            moe_result.get(
+                "expert_predictions",
+                {},
+            )
+        )
+
+        if not isinstance(
+            expert_predictions,
+            dict,
+        ):
+            expert_predictions = {}
+
+        experts = {}
+
+        for regime, prediction in (
+            expert_predictions.items()
+        ):
+
+            regime_name = normalize_regime_name(
+                regime
+            )
+
+            prediction_value = _safe_float(
+                prediction
+            )
+
+            gate_weight = clean_probabilities.get(
+                regime_name
+            )
+
+            effect = None
+
+            if (
+                prediction_value is not None
+                and gate_weight is not None
+            ):
+                # This is the mathematically attributable
+                # weighted expert component.
+                effect = (
+                    prediction_value
+                    * gate_weight
+                )
+
+            experts[regime_name] = {
+                "prediction_mm": (
+                    prediction_value
+                ),
+
+                "gate_weight": (
+                    gate_weight
+                ),
+
+                "effect_mm": effect,
+            }
+
+        # ----------------------------------------------------
+        # Dominant regime
+        # ----------------------------------------------------
+
+        dominant_regime = moe_result.get(
+            "dominant_regime"
+        )
+
+        if dominant_regime is None:
+            dominant_regime = (
+                max(
+                    clean_probabilities,
+                    key=lambda regime_name: clean_probabilities.get(
+                        regime_name,
+                        0.0,
+                    ),
+                )
+                if clean_probabilities
+                else None
+            )
+
+        dominant_probability = None
+
+        if dominant_regime is not None:
+            dominant_probability = (
+                clean_probabilities.get(
+                    normalize_regime_name(
+                        dominant_regime
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # Raw / corrected rainfall
+        # ----------------------------------------------------
+
+        raw_rainfall = _safe_float(
+            row.get(
+                "raw_nwp_d1"
+            )
+        )
+
+        corrected_rainfall = _safe_float(
+            moe_result.get(
+                "corrected_rainfall_mm"
+            )
+        )
+
+        if corrected_rainfall is None:
+            corrected_rainfall = _safe_float(
+                moe_result.get(
+                    "corrected_rainfall"
+                )
+            )
+
+        # ----------------------------------------------------
+        # Observed rainfall
+        # ----------------------------------------------------
+
+        observed_rainfall = _safe_float(
+            row.get(
+                "obs_rain_mean"
+            )
+        )
+
+        observed_max_rainfall = _safe_float(
+            row.get(
+                "obs_rain_max"
+            )
+        )
+
+        # ----------------------------------------------------
+        # Global model placeholder
+        #
+        # Do NOT invent a global prediction.
+        # ----------------------------------------------------
+
+        global_rainfall = None
+
+        # Existing predictor may expose a global model
+        # prediction in the future. We only use it if the
+        # object actually provides one.
+
+        if predictor is not None:
+
+            try:
+
+                if hasattr(
+                    predictor,
+                    "predict_corrected_rainfall",
+                ):
+                    predicted_regime = (
+                        str(
+                            dominant_regime
+                        )
+                        if dominant_regime
+                        else ""
+                    )
+
+                    global_candidate = (
+                        predictor.predict_corrected_rainfall(
+                            payload,
+                            predicted_regime,
+                        )
+                    )
+
+                    global_candidate = _safe_float(
+                        global_candidate
+                    )
+
+                    if global_candidate is not None:
+                        global_rainfall = (
+                            global_candidate
+                        )
+
+            except Exception:
+                global_rainfall = None
+
+        # ----------------------------------------------------
+        # Split
+        # ----------------------------------------------------
+
+        year = int(
+            pd.to_datetime(
+                row["date"]
+            ).year
+        )
+
+        if year == 2023:
+            split = "test"
+        elif year >= 2021:
+            split = "validation"
+        else:
+            split = "train"
+
+        # ----------------------------------------------------
+        # SHAP
+        # ----------------------------------------------------
+        #
+        # We intentionally do not generate fake SHAP values.
+        #
+
+        shap_result = {
+            "available": False,
+            "features": [],
+            "base_value": None,
+            "message": (
+                "SHAP values are not exposed by the "
+                "current inference model."
+            ),
+        }
+
+        # ----------------------------------------------------
+        # Expert adjustment
+        # ----------------------------------------------------
+
+        expert_adjustment = None
+
+        if (
+            raw_rainfall is not None
+            and corrected_rainfall is not None
+        ):
+            expert_adjustment = (
+                corrected_rainfall
+                - raw_rainfall
+            )
+
+        # ----------------------------------------------------
+        # Response
+        # ----------------------------------------------------
+
+        return {
+            "success": True,
+
+            "district": {
+                "district_id": normalize_district_id(
+                    row.get(
+                        "district_id"
+                    )
+                ),
+
+                "district_name": str(
+                    row.get(
+                        "district_name",
+                        "",
+                    )
+                ),
+
+                "state_name": str(
+                    row.get(
+                        "state_name",
+                        "",
+                    )
+                ),
+
+                "latitude": _safe_float(
+                    row.get(
+                        "latitude"
+                    )
+                ),
+
+                "longitude": _safe_float(
+                    row.get(
+                        "longitude"
+                    )
+                ),
+
+                "date": target_date.strftime(
+                    "%Y-%m-%d"
+                ),
+            },
+
+            "split": split,
+
+            "moe": {
+                "corrected_rainfall_mm": (
+                    corrected_rainfall
+                ),
+
+                "dominant_regime": (
+                    dominant_regime
+                ),
+
+                "dominant_probability": (
+                    dominant_probability
+                ),
+
+                "regime_probabilities": (
+                    clean_probabilities
+                ),
+
+                "experts": experts,
+
+                "expert_adjustment_mm": (
+                    expert_adjustment
+                ),
+            },
+
+            "rainfall": {
+                "raw_nwp_rainfall_mm": (
+                    raw_rainfall
+                ),
+
+                "global_rainfall_mm": (
+                    global_rainfall
+                ),
+
+                "corrected_rainfall_mm": (
+                    corrected_rainfall
+                ),
+
+                "observed_rainfall_mm": (
+                    observed_rainfall
+                ),
+
+                "observed_max_rainfall_mm": (
+                    observed_max_rainfall
+                ),
+
+                "bias_correction_mm": (
+                    (
+                        corrected_rainfall
+                        - raw_rainfall
+                    )
+                    if (
+                        corrected_rainfall is not None
+                        and raw_rainfall is not None
+                    )
+                    else None
+                ),
+            },
+
+            "shap": shap_result,
+
+            "input": payload,
+
+            "model": {
+                "name": "VARSHA-MoE",
+                "version": APP_VERSION,
+                "source": (
+                    "district_daily.parquet"
+                ),
+            },
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": (
+                    "Failed to generate "
+                    "district explanation."
+                ),
+                "error": str(exc),
+            },
+        )
 
 
 # ============================================================
@@ -560,11 +1452,11 @@ def moe_predict_endpoint(
     """
     VARSHA-MoE prototype endpoint.
 
-    This endpoint delegates the request to
-    inference.moe_predict.predict_moe().
+    Delegates inference to predict_moe().
     """
 
     try:
+
         result = predict_moe(
             payload
         )
@@ -576,6 +1468,7 @@ def moe_predict_endpoint(
         }
 
     except Exception as exc:
+
         return {
             "success": False,
             "model": "VARSHA-MoE",
@@ -594,6 +1487,7 @@ def predict(
     model = ensure_predictor()
 
     try:
+
         data = request_to_dict(
             request
         )
@@ -606,12 +1500,14 @@ def predict(
         }
 
     except InputValidationError as exc:
+
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         )
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
@@ -629,6 +1525,7 @@ def regime(
     model = ensure_predictor()
 
     try:
+
         data = request_to_dict(
             request
         )
@@ -646,12 +1543,14 @@ def regime(
         }
 
     except InputValidationError as exc:
+
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         )
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
@@ -669,6 +1568,7 @@ def correction(
     model = ensure_predictor()
 
     try:
+
         data = request_to_dict(
             request
         )
@@ -690,23 +1590,29 @@ def correction(
 
         return {
             "success": True,
+
             "raw_rainfall_mm": raw,
+
             "corrected_rainfall_mm": float(
                 corrected
             ),
+
             "bias_correction_mm": float(
                 corrected - raw
             ),
+
             "regime": predicted_regime,
         }
 
     except InputValidationError as exc:
+
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         )
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
@@ -724,6 +1630,7 @@ def heavy_rain(
     model = ensure_predictor()
 
     try:
+
         data = request_to_dict(
             request
         )
@@ -744,12 +1651,14 @@ def heavy_rain(
         }
 
     except InputValidationError as exc:
+
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         )
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
@@ -767,6 +1676,7 @@ def forecast(
     model = ensure_predictor()
 
     try:
+
         data = request_to_dict(
             request
         )
@@ -782,6 +1692,7 @@ def forecast(
                 "latitude": float(
                     data["latitude"]
                 ),
+
                 "longitude": float(
                     data["longitude"]
                 ),
@@ -833,43 +1744,18 @@ def forecast(
         }
 
     except InputValidationError as exc:
+
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         )
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
         )
-
-
-# ============================================================
-# DISTRICT DATASET LOADER
-# ============================================================
-
-def load_district_dataset() -> pd.DataFrame:
-    """
-    Load district_daily.parquet.
-    """
-
-    if not DISTRICT_DATASET.exists():
-        raise FileNotFoundError(
-            "district_daily.parquet not found at: "
-            f"{DISTRICT_DATASET}"
-        )
-
-    df = pd.read_parquet(
-        DISTRICT_DATASET
-    )
-
-    if df.empty:
-        raise ValueError(
-            "district_daily.parquet is empty"
-        )
-
-    return df
 
 
 # ============================================================
@@ -909,6 +1795,7 @@ def districts(
         df = load_district_dataset()
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),
@@ -947,6 +1834,7 @@ def districts(
     )
 
     if missing_columns:
+
         raise HTTPException(
             status_code=500,
             detail={
@@ -974,6 +1862,7 @@ def districts(
     )
 
     if df.empty:
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -994,11 +1883,12 @@ def districts(
         )
 
         if pd.isna(requested_date):
+
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Invalid date. Use "
-                    "YYYY-MM-DD."
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
                 ),
             )
 
@@ -1012,12 +1902,15 @@ def districts(
         ]
 
         if df.empty:
+
             return {
                 "success": True,
                 "count": 0,
+
                 "date": selected_date.strftime(
                     "%Y-%m-%d"
                 ),
+
                 "districts": [],
                 "data": [],
                 "errors": [],
@@ -1026,9 +1919,7 @@ def districts(
 
     else:
 
-        latest_date = df[
-            "date"
-        ].max()
+        latest_date = df["date"].max()
 
         selected_date = (
             latest_date.normalize()
@@ -1044,6 +1935,7 @@ def districts(
     # --------------------------------------------------------
 
     if state:
+
         df = df[
             df["state_name"]
             .astype(str)
@@ -1082,8 +1974,13 @@ def districts(
     # ML inference
     # --------------------------------------------------------
 
-    results: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
+    results: list[
+        dict[str, Any]
+    ] = []
+
+    errors: list[
+        dict[str, str]
+    ] = []
 
     for _, row in df.iterrows():
 
@@ -1125,11 +2022,17 @@ def districts(
 
     return {
         "success": True,
+
         "count": len(results),
+
         "date": date_string,
+
         "districts": results,
+
         "data": results,
+
         "errors": errors,
+
         "error_count": len(errors),
     }
 
@@ -1150,7 +2053,9 @@ def provenance():
 
     dataset_info = {
         "file": DISTRICT_DATASET.name,
-        "path": str(DISTRICT_DATASET),
+        "path": str(
+            DISTRICT_DATASET
+        ),
         "exists": dataset_exists,
     }
 
@@ -1165,7 +2070,7 @@ def provenance():
             dates = pd.to_datetime(
                 df["date"],
                 errors="coerce",
-            )
+            ).dropna()
 
             dataset_info.update(
                 {
@@ -1181,7 +2086,7 @@ def provenance():
                         dates.min().strftime(
                             "%Y-%m-%d"
                         )
-                        if dates.notna().any()
+                        if not dates.empty
                         else None
                     ),
 
@@ -1189,17 +2094,21 @@ def provenance():
                         dates.max().strftime(
                             "%Y-%m-%d"
                         )
-                        if dates.notna().any()
+                        if not dates.empty
                         else None
                     ),
 
                     "districts": (
                         int(
-                            df["district_name"]
+                            df[
+                                "district_name"
+                            ]
                             .nunique()
                         )
-                        if "district_name"
-                        in df.columns
+                        if (
+                            "district_name"
+                            in df.columns
+                        )
                         else None
                     ),
                 }
@@ -1225,18 +2134,30 @@ def provenance():
 
         "models": {
             "regime_classifier": {
-                "file": "regime_classifier.joblib",
-                "loaded": predictor is not None,
+                "file": (
+                    "regime_classifier.joblib"
+                ),
+                "loaded": (
+                    predictor is not None
+                ),
             },
 
             "rainfall_corrector": {
-                "file": "rainfall_corrector.joblib",
-                "loaded": predictor is not None,
+                "file": (
+                    "rainfall_corrector.joblib"
+                ),
+                "loaded": (
+                    predictor is not None
+                ),
             },
 
             "heavy_rain_classifier": {
-                "file": "heavy_rain_classifier.joblib",
-                "loaded": predictor is not None,
+                "file": (
+                    "heavy_rain_classifier.joblib"
+                ),
+                "loaded": (
+                    predictor is not None
+                ),
             },
         },
 
@@ -1283,7 +2204,10 @@ def case_replays():
                 file
             )
 
-        if isinstance(data, dict):
+        if isinstance(
+            data,
+            dict,
+        ):
 
             cases = data.get(
                 "cases",
@@ -1296,7 +2220,10 @@ def case_replays():
                 ),
             )
 
-        elif isinstance(data, list):
+        elif isinstance(
+            data,
+            list,
+        ):
 
             cases = data
 
@@ -1352,7 +2279,9 @@ def district_history(
 
     heavy_rain: Optional[bool] = Query(
         default=None,
-        description="Filter by AI heavy-rain prediction.",
+        description=(
+            "Filter by AI heavy-rain prediction."
+        ),
     ),
 
     min_rain: Optional[float] = Query(
@@ -1380,16 +2309,6 @@ def district_history(
 ):
     """
     Historical district rainfall endpoint.
-
-    Unlike a simple database dump, this endpoint also
-    runs the trained VARSHA-MoE inference pipeline so
-    the frontend can compare:
-
-        observed rainfall
-        raw NWP rainfall
-        AI corrected rainfall
-        heavy-rain probability
-        predicted regime
     """
 
     try:
@@ -1531,14 +2450,29 @@ def district_history(
     if regime:
 
         regime_value = (
-            regime.strip().lower()
+            regime
+            .strip()
+            .lower()
         )
 
-        regime_name = (
-            df["regime_name"]
-            if "regime_name" in df.columns
-            else df["regime"]
-        )
+        if "regime_name" in df.columns:
+
+            regime_name = (
+                df["regime_name"]
+            )
+
+        elif "regime" in df.columns:
+
+            regime_name = (
+                df["regime"]
+            )
+
+        else:
+
+            regime_name = pd.Series(
+                "",
+                index=df.index,
+            )
 
         df = df[
             regime_name
@@ -1586,13 +2520,10 @@ def district_history(
 
     # --------------------------------------------------------
     # Pagination
-    #
-    # We apply pagination AFTER filtering but BEFORE
-    # expensive model inference.
     # --------------------------------------------------------
 
     df = df.iloc[
-        skip: skip + limit
+        skip : skip + limit
     ]
 
     # --------------------------------------------------------
@@ -1618,7 +2549,10 @@ def district_history(
             )
 
             record = {
-                "date": result["date"],
+
+                "date": result[
+                    "date"
+                ],
 
                 "district_name": result[
                     "district_name"
@@ -1637,83 +2571,116 @@ def district_history(
                 ],
 
                 # Observed
-                "observed_rainfall_mm": result[
-                    "observed_rainfall_mm"
-                ],
+                "observed_rainfall_mm": (
+                    result[
+                        "observed_rainfall_mm"
+                    ]
+                ),
 
-                "observed_max_rainfall_mm": result[
-                    "observed_max_rainfall_mm"
-                ],
+                "observed_max_rainfall_mm": (
+                    result[
+                        "observed_max_rainfall_mm"
+                    ]
+                ),
 
                 # Raw NWP
-                "raw_nwp_d1_mm": result[
-                    "raw_rainfall_mm"
-                ],
+                "raw_nwp_d1_mm": (
+                    result[
+                        "raw_rainfall_mm"
+                    ]
+                ),
 
                 # AI correction
-                "corrected_rainfall_mm": result[
-                    "corrected_rainfall_mm"
-                ],
+                "corrected_rainfall_mm": (
+                    result[
+                        "corrected_rainfall_mm"
+                    ]
+                ),
 
-                "bias_correction_mm": result[
-                    "bias_correction_mm"
-                ],
+                "bias_correction_mm": (
+                    result[
+                        "bias_correction_mm"
+                    ]
+                ),
 
                 # Regime
                 "regime": result[
                     "regime"
                 ],
 
-                "regime_probability": result[
-                    "regime_probability"
-                ],
+                "regime_probability": (
+                    result[
+                        "regime_probability"
+                    ]
+                ),
 
                 # Heavy rain
                 "heavy_rain": result[
                     "heavy_rain"
                 ],
 
-                "heavy_rain_probability": result[
-                    "heavy_rain_probability"
-                ],
+                "heavy_rain_probability": (
+                    result[
+                        "heavy_rain_probability"
+                    ]
+                ),
 
-                # Raw D2-D5 are included for
-                # the historical page.
+                # Raw D2-D5
                 "raw_nwp_d2_mm": (
-                    float(row["raw_nwp_d2"])
-                    if pd.notna(
-                        row.get("raw_nwp_d2")
+                    float(
+                        row["raw_nwp_d2"]
+                    )
+                    if (
+                        "raw_nwp_d2" in row.index
+                        and pd.notna(
+                            row["raw_nwp_d2"]
+                        )
                     )
                     else None
                 ),
 
                 "raw_nwp_d3_mm": (
-                    float(row["raw_nwp_d3"])
-                    if pd.notna(
-                        row.get("raw_nwp_d3")
+                    float(
+                        row["raw_nwp_d3"]
+                    )
+                    if (
+                        "raw_nwp_d3" in row.index
+                        and pd.notna(
+                            row["raw_nwp_d3"]
+                        )
                     )
                     else None
                 ),
 
                 "raw_nwp_d4_mm": (
-                    float(row["raw_nwp_d4"])
-                    if pd.notna(
-                        row.get("raw_nwp_d4")
+                    float(
+                        row["raw_nwp_d4"]
+                    )
+                    if (
+                        "raw_nwp_d4" in row.index
+                        and pd.notna(
+                            row["raw_nwp_d4"]
+                        )
                     )
                     else None
                 ),
 
                 "raw_nwp_d5_mm": (
-                    float(row["raw_nwp_d5"])
-                    if pd.notna(
-                        row.get("raw_nwp_d5")
+                    float(
+                        row["raw_nwp_d5"]
+                    )
+                    if (
+                        "raw_nwp_d5" in row.index
+                        and pd.notna(
+                            row["raw_nwp_d5"]
+                        )
                     )
                     else None
                 ),
             }
 
             # ------------------------------------------------
-            # Apply heavy-rain filter AFTER inference
+            # Heavy-rain filter AFTER inference
             # ------------------------------------------------
 
             if (
@@ -1737,17 +2704,20 @@ def district_history(
                             "Unknown",
                         )
                     ),
+
                     "date": (
                         row["date"].strftime(
                             "%Y-%m-%d"
                         )
                     ),
+
                     "error": str(exc),
                 }
             )
 
     return {
         "success": True,
+
         "district": district,
 
         "filters": {
@@ -1760,6 +2730,7 @@ def district_history(
         },
 
         "skip": skip,
+
         "limit": limit,
 
         "total": total_before_inference,
@@ -1794,13 +2765,19 @@ def data_status():
 
         dataset_info = {
             "exists": dataset_exists,
+
             "path": str(
                 DISTRICT_DATASET
             ),
+
             "rows": 0,
+
             "columns": 0,
+
             "start_date": None,
+
             "end_date": None,
+
             "districts": 0,
         }
 
@@ -1827,10 +2804,13 @@ def data_status():
                 and not df.empty
             ):
 
-                dates = pd.to_datetime(
-                    df["date"],
-                    errors="coerce",
-                ).dropna()
+                dates = (
+                    pd.to_datetime(
+                        df["date"],
+                        errors="coerce",
+                    )
+                    .dropna()
+                )
 
                 if not dates.empty:
 
@@ -1883,6 +2863,7 @@ def data_status():
 
         return {
             "success": True,
+
             "project": "VARSHA-MoE",
 
             "dataset": dataset_info,
@@ -1925,10 +2906,6 @@ def verification():
     """
     Return held-out test verification results.
 
-    verification.py writes the generated metrics to:
-
-        ml/verification_test.json
-
     The API never invents metrics.
     """
 
@@ -1936,6 +2913,7 @@ def verification():
 
         return {
             "success": False,
+
             "available": False,
 
             "message": (
@@ -1998,8 +2976,8 @@ async def startup_event():
     )
 
     print(
-        f"District dataset: "
-        f"{DISTRICT_DATASET}"
+        "District dataset:",
+        DISTRICT_DATASET,
     )
 
     print(
@@ -2015,6 +2993,16 @@ async def startup_event():
     print(
         "Verification available:",
         VERIFICATION_FILE.exists(),
+    )
+
+    print(
+        "Case replays file:",
+        CASE_REPLAYS_FILE,
+    )
+
+    print(
+        "Case replays available:",
+        CASE_REPLAYS_FILE.exists(),
     )
 
     if predictor is not None:

@@ -2,12 +2,15 @@ import { NavLink, Link } from "react-router-dom";
 import { FaCloudRain, FaHistory } from "react-icons/fa";
 import { LuLayoutDashboard } from "react-icons/lu";
 import { IoBarChart } from "react-icons/io5";
-import { FiActivity, FiHome } from "react-icons/fi";
+import { FiActivity, FiGitBranch,
+  FiSliders, } from "react-icons/fi";
 
 const navigation = [
   { name: "Dashboard", path: "/dashboard", icon: LuLayoutDashboard },
-  { name: "Run Forecast", path: "/forecast", icon: FaCloudRain },
+  { name: "Forecast", path: "/forecast", icon: FaCloudRain },
   { name: "Regime Analysis", path: "/regime", icon: FiActivity },
+  { name: "Moe Explainability", path: "/moe-forecast", icon: FiGitBranch },
+  { name: "Post Processing", path: "/post-processing", icon: FiSliders },
   { name: "Verification", path: "/verification", icon: IoBarChart },
   { name: "Historical", path: "/historical", icon: FaHistory },
 ];
